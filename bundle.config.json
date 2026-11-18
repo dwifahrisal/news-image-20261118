@@ -1,0 +1,5 @@
+{
+  "system_prompt_path": "transcript/system-prompt.md",
+  "prompt_files": ["transcript/user-prompt.txt"],
+  "agent": { "name": "hermes" }
+}

@@ -1,0 +1,1 @@
+Build one image that sums up the world's news of Wednesday 18 November 2026 to /output/entry.png. Python 3.13 standard library only, no network, deterministic (runs twice must be byte-identical). The image must name its day, show the day's most consequential stories across regions and fields, and read clearly at a glance.
