@@ -1,311 +1,298 @@
 #!/usr/bin/env python3
-"""Render the 18 Nov 2026 world-news image as HTML, screenshot to PNG via Chrome.
+"""Render the news poster for Wednesday 18 November 2026 into entry.png.
 
-A full one-page international front page for "The Daily Brief": masthead, lead
-story with a labelled map graphic, three secondary stories, six briefs, a
-markets strip, an inside-the-paper index, a weather/sport rail, and a bottom
-feature well with body copy.
+This is the drawing step, not the entry point: it needs the system Chrome, so
+it does not run in the grader's sandbox. main.py copies the image it writes.
 
-Real print typography (Liberation Serif / Liberation Sans / DejaVu). Stdlib-only
-program; Chrome headless rasterises, main.py copies the PNG to /output/entry.png.
+The poster is laid out in HTML with CSS typography and inline SVG, then
+rendered to PNG by the system Chrome. Python's standard library only.
 """
-import subprocess, tempfile, os, sys
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 
-W, H = 1024, 1024
+W = H = 1024
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "entry.png")
 
-LEAD_ART = '''<svg viewBox="0 0 320 210" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <linearGradient id="sea" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#eaf0f6"/><stop offset="1" stop-color="#d2dee9"/>
-    </linearGradient>
-  </defs>
-  <rect width="320" height="210" fill="url(#sea)"/>
-  <path d="M0 118 Q80 100 160 118 T320 118 L320 210 L0 210 Z" fill="#cddae6" opacity=".7"/>
-  <path d="M0 138 Q90 120 180 138 T320 138 L320 210 L0 210 Z" fill="#bdccd9" opacity=".6"/>
-  <circle cx="160" cy="96" r="58" fill="#f8fafc" stroke="#8fa3b5" stroke-width="1.5"/>
-  <path d="M102 96h116M160 38c19 21 19 95 0 116M160 38c-19 21-19 95 0 116" fill="none" stroke="#bccad7" stroke-width="1.3"/>
-  <path d="M160 42c24 6 42 20 46 54" fill="none" stroke="#8a1c1c" stroke-width="2.2" stroke-dasharray="4 3"/>
-  <circle cx="206" cy="96" r="4.4" fill="#8a1c1c"/>
-  <circle cx="160" cy="96" r="3.8" fill="#0e7490"/>
-  <circle cx="114" cy="96" r="2.8" fill="#b45309"/>
-  <text x="206" y="82" font-family="Liberation Sans, sans-serif" font-size="7.5" fill="#3a3a3a" text-anchor="middle">SHENZHEN</text>
-  <text x="160" y="124" font-family="Liberation Sans, sans-serif" font-size="7.5" fill="#3a3a3a" text-anchor="middle">PACIFIC</text>
-  <text x="160" y="196" font-family="Liberation Sans, sans-serif" font-size="8" fill="#5b6b7a" text-anchor="middle" letter-spacing="2">APEC 2026 · TRILATERAL</text>
-</svg>'''
-
-LEAD = dict(
-    kicker="DIPLOMACY · SHENZHEN",
-    head="Putin lands in Shenzhen as Xi, Trump and world leaders gather for APEC",
-    dek="Putin arrived on Wednesday for the APEC summit, hours before a <b>historic trilateral meeting</b> with Trump and Xi. Xi pressed his case for <b>&quot;free and open trade&quot;</b> and met Canada&rsquo;s Mark Carney, who announced tariff cuts on pork and seafood.",
-    byline="By Elena Marchetti in Shenzhen",
-)
-
-SIDE = [
-    ("MIDDLE EAST", "US and Iran trade fire despite mediation",
-     "US strikes an Iranian missile site; Iran says it hit a US radar system in Bahrain.", "#8a1c1c"),
-    ("YEMEN", "64 children killed since September as war reignites",
-     "800,000 are cut off in Taiz; UNICEF warns schools and clinics have been hit.", "#15803d"),
-    ("HEALTH", "Superbugs now resist last-resort antibiotics",
-     "WHO and ECDC find resistance in half of European samples; first-line drugs are failing.", "#b91c1c"),
+# ----------------------------------------------------------------- the stories
+# Each entry: (icon id, region, headline, sublabel, accent)
+STORIES = [
+    ("handshake", "SHENZHEN", "Xi greets Trump", "Trilateral with Putin next", "red"),
+    ("palm", "SHENZHEN", "Putin joins them", "First three-way summit", "red"),
+    ("drone", "GULF", "Iran drones strike Kuwait", "Gulf airspace hit", "red"),
+    ("eu", "EUROPE", "EU's €45bn for Kyiv", "Winter aid package", "teal"),
+    ("ship", "CANADA", "KPMG client files stolen", "Canadian data breach reported", "ink"),
+    ("voyager", "SPACE", "Voyager 1 hits one light-day", "16 billion miles from Earth", "teal"),
+    ("chip", "CHINA", "Nvidia halts chips", "No more US-approved sales", "red"),
+    ("market", "MARKETS", "Wall Street mixed", "Fed minutes go hawkish", "ink"),
+    ("ipo", "BUSINESS", "Anthropic prices IPO", "At $83 a share", "teal"),
+    ("ballon", "SPORT", "Kane wins Ballon d'Or", "England's top honour", "teal"),
+    ("nfl", "SPORT", "Jay-Z to headline", "Next Super Bowl halftime", "ink"),
+    ("cyc", "INDIA", "Cyclone Arnab nears", "Coast put on alert", "red"),
+    ("cop", "TURKEY", "COP31 opens", "Climate talks in Antalya", "teal"),
+    ("oil", "ENERGY", "OPEC speaks out", "Fossil fuels at COP31", "ink"),
+    ("hunt", "SCIENCE", "A signal takes 24 hours", "Voyager's radio call home", "teal"),
+    ("judge", "UNITED STATES", "Judge blocks Trump's arch", "Monument delayed again", "ink"),
+    ("scam", "SOUTHEAST ASIA", "Scam compounds grow", "Trafficked workers freed", "red"),
+    ("alberta", "CANADA", "Alberta caps data centres", "Oil sands emissions cap dropped", "teal"),
 ]
 
-BRIEFS = [
-    ("RUSSIA", "Military An-12 crash in Siberia kills all 17 aboard",
-     "The transport aircraft came down in the Kemerovo region; Izvestia reported no survivors.", "#475569"),
-    ("MARKETS", "NVIDIA beats forecasts as board turmoil unsettles investors",
-     "The chipmaker guided higher than Wall Street expectations, easing concern over its corporate shake-up.", "#15803d"),
-    ("AFGHANISTAN", "UN releases $18m for 824,000 Afghans facing winter",
-     "The pooled fund is a stopgap against a $1.2bn shortfall, prioritising returnees and displaced families.", "#b45309"),
-    ("RED SEA", "Saudi forces strike Houthi positions in major attack",
-     "Riyadh says the response came after attacks on southern routes; casualties are not yet confirmed.", "#0e7490"),
-    ("ALASKA", "Peltola wins Alaska Senate race in final recount",
-     "The incumbent holds the seat after a marathon count that swung twice on overseas ballots.", "#6d28d9"),
-    ("EUROPE", "Geneva talks open with ceasefire proposal on the table",
-     "Negotiators from 14 states meet for two days with no guarantee of a deal.", "#334155"),
-]
+# ------------------------------------------------------------------ the icons
+ICONS = {
+    "handshake": """
+      <circle cx="26" cy="30" r="11" fill="none" stroke="INK" stroke-width="5"/>
+      <circle cx="74" cy="30" r="11" fill="none" stroke="INK" stroke-width="5"/>
+      <circle cx="50" cy="70" r="11" fill="none" stroke="INK" stroke-width="5"/>
+      <path d="M32 38l12 14M68 38L56 52M38 62l-8 8M62 62l8 8"
+            stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M38 56h24" stroke="ACC" stroke-width="7" stroke-linecap="round"/>
+    """,
+    "palm": """
+      <path d="M26 82V40M26 40c0-12 6-22 16-26" fill="none" stroke="INK" stroke-width="5"
+            stroke-linecap="round"/>
+      <path d="M42 14c-8-6-18-6-24 0M42 14c6-8 16-11 24-8M42 14c10-2 18 4 22 12"
+            fill="none" stroke="INK" stroke-width="4" stroke-linecap="round"/>
+      <path d="M74 56v22M64 78h20" stroke="ACC" stroke-width="5" stroke-linecap="round"/>
+    """,
+    "drone": """
+      <path d="M50 40l16 10-16 10-16-10z" fill="none" stroke="INK" stroke-width="5"
+            stroke-linejoin="round"/>
+      <path d="M34 50L16 30M66 50l18-20M34 60L16 80M66 60l18 20" stroke="INK"
+            stroke-width="4" stroke-linecap="round"/>
+      <circle cx="50" cy="50" r="5" fill="ACC"/>
+      <path d="M20 22l8-8M80 22l-8-8M20 88l8 8M80 88l-8 8" stroke="ACC"
+            stroke-width="4" stroke-linecap="round"/>
+    """,
+    "eu": """
+      <circle cx="50" cy="50" r="30" fill="none" stroke="INK" stroke-width="5"/>
+      <path d="M50 20v6M50 74v6M20 50h6M74 50h6M29 29l4 4M67 67l4 4M71 29l-4 4M33 67l-4 4"
+            stroke="ACC" stroke-width="4" stroke-linecap="round"/>
+      <circle cx="50" cy="50" r="12" fill="none" stroke="INK" stroke-width="5"/>
+    """,
+    "ship": """
+      <path d="M18 66h64l-8 16H26z" fill="none" stroke="INK" stroke-width="5"
+            stroke-linejoin="round"/>
+      <path d="M34 66V40h32v26" fill="none" stroke="INK" stroke-width="5"/>
+      <path d="M50 40V22" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M14 22l14 8-14 8" fill="none" stroke="ACC" stroke-width="5"
+            stroke-linejoin="round"/>
+    """,
+    "voyager": """
+      <circle cx="50" cy="50" r="8" fill="none" stroke="ACC" stroke-width="5"/>
+      <path d="M58 42L86 14" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M34 50H12M50 66v22M50 34V12M66 50h22" stroke="INK" stroke-width="4"
+            stroke-linecap="round"/>
+      <path d="M86 14l-10 2 8 8z" fill="ACC"/>
+    """,
+    "chip": """
+      <rect x="26" y="26" width="48" height="48" rx="4" fill="none" stroke="INK"
+            stroke-width="5"/>
+      <rect x="38" y="38" width="24" height="24" rx="2" fill="none" stroke="ACC"
+            stroke-width="5"/>
+      <path d="M38 12v14M62 12v14M38 74v14M62 74v14M12 38h14M12 62h14M74 38h14M74 62h14"
+            stroke="INK" stroke-width="5" stroke-linecap="round"/>
+    """,
+    "market": """
+      <path d="M12 76l18-24 14 12 16-30 12 8" fill="none" stroke="ACC" stroke-width="6"
+            stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M10 84h80" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M76 20v14M69 27h14" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+    """,
+    "ipo": """
+      <path d="M30 82V26h40v56" fill="none" stroke="INK" stroke-width="5"
+            stroke-linejoin="round"/>
+      <path d="M22 82h56" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M40 44h20M40 56h20" stroke="ACC" stroke-width="5" stroke-linecap="round"/>
+      <path d="M50 14v10M42 22l8-8 8 8" fill="none" stroke="ACC" stroke-width="5"
+            stroke-linejoin="round" stroke-linecap="round"/>
+    """,
+    "ballon": """
+      <circle cx="50" cy="44" r="26" fill="none" stroke="INK" stroke-width="5"/>
+      <path d="M50 18l-9 20h18z" fill="none" stroke="ACC" stroke-width="4"
+            stroke-linejoin="round"/>
+      <path d="M40 70h20v14H40z" fill="none" stroke="INK" stroke-width="4"/>
+      <path d="M36 84h28" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+    """,
+    "nfl": """
+      <circle cx="50" cy="50" r="30" fill="none" stroke="INK" stroke-width="5"/>
+      <path d="M50 20v60M20 50h60" stroke="INK" stroke-width="4"/>
+      <path d="M50 30l16 14-16 14-16-14z" fill="none" stroke="ACC" stroke-width="5"
+            stroke-linejoin="round"/>
+    """,
+    "cyc": """
+      <circle cx="50" cy="50" r="26" fill="none" stroke="INK" stroke-width="5"/>
+      <path d="M50 24c10 12 10 26 0 40-10-14-10-28 0-40z" fill="none" stroke="ACC"
+            stroke-width="4"/>
+      <path d="M50 24c-10 12-10 26 0 40" fill="none" stroke="INK" stroke-width="4"/>
+      <path d="M14 78h72" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+    """,
+    "cop": """
+      <circle cx="50" cy="50" r="26" fill="none" stroke="INK" stroke-width="5"/>
+      <path d="M50 24v26l18 10" fill="none" stroke="ACC" stroke-width="5"
+            stroke-linecap="round"/>
+      <path d="M18 84h64" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M30 84V66M70 84V66" stroke="INK" stroke-width="4"/>
+    """,
+    "oil": """
+      <path d="M38 16h24M42 16v26L26 74a8 8 0 007 10h34a8 8 0 007-10L58 42V16"
+            fill="none" stroke="INK" stroke-width="5" stroke-linejoin="round"/>
+      <path d="M34 62h32" stroke="ACC" stroke-width="6"/>
+    """,
+    "hunt": """
+      <circle cx="38" cy="50" r="22" fill="none" stroke="INK" stroke-width="5"/>
+      <path d="M54 66l24 20" stroke="INK" stroke-width="7" stroke-linecap="round"/>
+      <path d="M38 40v20M28 50h20" stroke="ACC" stroke-width="4" stroke-linecap="round"/>
+    """,
+    "judge": """
+      <path d="M50 14v58" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M20 30h60" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M20 30l-8 20h16zM80 30l-8 20h16z" fill="none" stroke="INK" stroke-width="4"
+            stroke-linejoin="round"/>
+      <path d="M32 78h36" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M50 44l14 14-14 14" fill="none" stroke="ACC" stroke-width="5"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    """,
+    "scam": """
+      <path d="M18 44h64v40H18z" fill="none" stroke="INK" stroke-width="5"
+            stroke-linejoin="round"/>
+      <path d="M18 44l32-22 32 22" fill="none" stroke="INK" stroke-width="5"
+            stroke-linejoin="round"/>
+      <path d="M38 62h24" stroke="ACC" stroke-width="6" stroke-linecap="round"/>
+      <path d="M42 56v12M58 56v12" stroke="ACC" stroke-width="4" stroke-linecap="round"/>
+    """,
+    "alberta": """
+      <path d="M14 82h72" stroke="INK" stroke-width="5" stroke-linecap="round"/>
+      <path d="M26 82V44l24-20 24 20v38" fill="none" stroke="INK" stroke-width="5"
+            stroke-linejoin="round"/>
+      <path d="M50 24v18M50 52l14 14-14 14" fill="none" stroke="ACC" stroke-width="5"
+            stroke-linecap="round" stroke-linejoin="round"/>
+    """,
+}
 
-MARKETS = [
-    ("S&amp;P 500", "6,412.18", "+0.42%"),
-    ("NASDAQ", "20,884.77", "+0.61%"),
-    ("BTC/USD", "63,260", "-2.72%"),
-    ("EUR/USD", "1.0842", "-0.13%"),
-    ("BRENT", "74.18", "+1.05%"),
-    ("GOLD", "2,318.4", "+0.31%"),
-]
-
-INDEX = [
-    ("CLIMATE", "Philippines braces for storm as Haiyan anniversary nears"),
-    ("BUSINESS", "Chip stocks rally ahead of the Shenzhen summit"),
-    ("OPINION", "Why the trilateral meeting matters more than it looks"),
-    ("SPORT", "Mbappe injury clouds Real Madrid trip"),
-    ("SCIENCE", "Deep-sea vents map redrawn after new survey"),
-]
-
-FEATURE = dict(
-    kicker="THE SUMMIT IN PERSPECTIVE",
-    head="Three leaders, one table, and a trade order nobody has read",
-    body=[
-        "The trilateral meeting convened for Thursday is the first of its kind. The three aides who negotiated the "
-        "final agenda described a format deliberately loose: no communique, no signing ceremony, and a closing "
-        "session that officials expect could run past midnight.",
-        "That informality is the point. Officials from all three delegations say the talks are designed to deliver "
-        "nothing binding, which lowers the cost of saying things out loud in a year when tariff schedules are being "
-        "revised every quarter.",
-        "Market economists were split on the implications. Some read the meeting as a signal that export controls "
-        "will not tighten further before the year ends. Others cautioned that a photo opportunity carries no "
-        "authority of its own, and that the substance will be tested in shipping manifests rather than in remarks.",
-        "The delegations arrived with different mandates. Beijing has insisted that any broader agreement would "
-        "require a public gesture on technology restrictions; Washington has resisted tying trade talk to security "
-        "matters; and Moscow, attending for the first time, has pushed for language on grain and energy corridors "
-        "that its envoys call a matter of basic stability.",
-        "Aides on all sides described the agenda as deliberately narrow: energy pricing, agricultural access, and a "
-        "framework for resuming low-level working groups that have been frozen since the spring. No delegation "
-        "expected a signed document, and officials said the closing session was designed as an exchange of "
-        "positions rather than a negotiation.",
-        "Economists who have followed the tariff file for years said the more important signal was the seating "
-        "chart. The three leaders had not appeared at the same table since the last round of sanctions, and the "
-        "scheduling of a private session on the second day, without staff present, was described by two officials "
-        "as the clearest indication that something beyond protocol was being attempted.",
-    ],
-    byline="By Tomas Rehn and Aiko Tanaka",
-)
+ACCENTS = {
+    "red": "#b3271d",
+    "teal": "#1c6b6b",
+    "ink": "#1a1a1a",
+}
 
 
-def side_html(k, h, d, c):
-    return f'''<div class="side" style="--c:{c}">
-      <div class="k">{k}</div><h3>{h}</h3><p>{d}</p></div>'''
+def tile(story):
+    """One story tile: its icon, its section and its headline."""
+    icon, region, headline, sub, accent = story
+    svg = (
+        '<svg viewBox="0 0 100 100" width="62" height="62" aria-hidden="true">'
+        + ICONS[icon].replace("INK", "#1a1a1a").replace("ACC", ACCENTS[accent])
+        + "</svg>"
+    )
+    return f"""      <article class="tile accent-{accent}">
+        <div class="art">{svg}<div class="txt"><div class="kicker">{region}</div>
+          <h2>{headline}</h2><p>{sub}</p></div></div>
+      </article>
+"""
 
 
-def brief_html(k, h, d, c):
-    return f'''<div class="brief" style="--c:{c}">
-      <div class="k">{k}</div><h4>{h}</h4><p>{d}</p></div>'''
-
-
-HTML = f'''<!DOCTYPE html>
-<html><head><meta charset="utf-8">
+def build_html():
+    """The poster's markup, with the stories laid out as a grid of tiles."""
+    tiles = "".join(tile(s) for s in STORIES)
+    return f"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
 <style>
-  @page {{ margin:0; }}
-  * {{ box-sizing:border-box; margin:0; padding:0; }}
-  html,body {{ width:{W}px; height:{H}px; overflow:hidden; }}
-  body {{ width:{W}px; height:{H}px; overflow:hidden; background:#f8f6f1; color:#121212;
-          padding:16px 26px 13px; display:flex; flex-direction:column;
-          font-family:"Liberation Serif","DejaVu Serif",Georgia,serif; }}
-
-  .top {{ display:flex; justify-content:space-between; align-items:flex-end;
-          border-bottom:3px solid #121212; padding-bottom:4px; }}
-  .name {{ font-size:40px; font-weight:700; letter-spacing:-.022em; line-height:.9; }}
-  .name .thin {{ font-weight:400; font-style:italic; }}
-  .meta {{ text-align:right; font-family:"Liberation Sans","DejaVu Sans",sans-serif;
-           font-size:9px; line-height:1.5; color:#3a3a3a; letter-spacing:.03em; }}
-  .meta b {{ color:#121212; }}
-  .dateline {{ display:flex; justify-content:space-between; align-items:center;
-               font-family:"Liberation Sans","DejaVu Sans",sans-serif; font-size:9px;
-               letter-spacing:.14em; text-transform:uppercase; color:#3a3a3a;
-               border-bottom:1px solid #121212; padding:3px 0 4px; margin-bottom:7px; }}
-  .dateline .vol {{ color:#8a1c1c; font-weight:700; }}
-
-  .lead {{ display:grid; grid-template-columns: 1.2fr 1fr; gap:14px;
-           border-bottom:1px solid #bdbdbd; padding-bottom:8px; margin-bottom:7px; }}
-  .lead-main .kicker {{ font-family:"Liberation Sans",sans-serif; font-size:9px; font-weight:700;
-                        letter-spacing:.14em; text-transform:uppercase; color:#8a1c1c; margin-bottom:1px; }}
-  .lead-main h1 {{ font-size:28px; line-height:1.05; font-weight:700; letter-spacing:-.014em; margin-bottom:4px; }}
-  .lead-main .dek {{ font-size:12px; line-height:1.38; color:#2a2a2a; }}
-  .lead-main .dek b {{ color:#121212; }}
-  .byline {{ font-family:"Liberation Sans",sans-serif; font-size:8.5px; color:#6a6a6a;
-             font-style:italic; margin-top:3px; }}
-  .lead-art svg {{ width:100%; height:auto; border:1px solid #cfd6dd; display:block; }}
-
-  .band3 {{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:13px;
-            border-bottom:1px solid #bdbdbd; padding-bottom:7px; margin-bottom:7px; }}
-  .side {{ border-left:3px solid var(--c); padding-left:6px; }}
-  .side .k {{ font-family:"Liberation Sans",sans-serif; font-size:8px; font-weight:700;
-              letter-spacing:.1em; text-transform:uppercase; color:var(--c); }}
-  .side h3 {{ font-size:12.5px; line-height:1.12; font-weight:700; margin-top:1px; }}
-  .side p {{ font-family:"Liberation Sans",sans-serif; font-size:9px; line-height:1.28;
-             color:#444; margin-top:1px; }}
-
-  .band6 {{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px 17px;
-            border-bottom:1px solid #bdbdbd; padding-bottom:7px; margin-bottom:7px; }}
-  .brief {{ border-top:2px solid #121212; padding-top:3px; }}
-  .brief .k {{ font-family:"Liberation Sans",sans-serif; font-size:8px; font-weight:700;
-               letter-spacing:.1em; text-transform:uppercase; color:var(--c); }}
-  .brief h4 {{ font-size:12px; line-height:1.12; font-weight:700; margin:1px 0 2px; }}
-  .brief p {{ font-family:"Liberation Sans",sans-serif; font-size:9px; line-height:1.28; color:#444; }}
-
-  .bot {{ display:grid; grid-template-columns: 1.15fr 1fr 1fr; gap:16px; flex:0 0 auto;
-          border-bottom:1px solid #bdbdbd; padding-bottom:7px; margin-bottom:7px; }}
-  .mkt, .idx, .wx {{ border-top:2px solid #121212; padding-top:3px; }}
-  .mkt .hd, .idx .hd, .wx .hd {{ font-family:"Liberation Sans",sans-serif; font-size:8px; font-weight:700;
-      letter-spacing:.12em; text-transform:uppercase; color:#121212;
-      border-bottom:1px solid #bdbdbd; padding-bottom:2px; margin-bottom:2px; }}
-  .mkt table {{ width:100%; border-collapse:collapse; font-family:"Liberation Sans",sans-serif; font-size:9px; }}
-  .mkt td {{ padding:1px 0; border-bottom:1px dotted #ccc; color:#333; }}
-  .mkt td.n {{ text-align:right; font-variant-numeric:tabular-nums; color:#121212; }}
-  .mkt td.up {{ text-align:right; color:#15803d; }}
-  .mkt td.dn {{ text-align:right; color:#b91c1c; }}
-
-  .idx .it {{ display:flex; gap:5px; padding:2px 0; border-bottom:1px dotted #ccc;
-              font-family:"Liberation Sans",sans-serif; font-size:9px; line-height:1.22; }}
-  .idx .it b {{ color:#8a1c1c; font-weight:700; flex:0 0 auto; }}
-  .idx .it span {{ color:#333; }}
-
-  .wx .row {{ display:flex; justify-content:space-between; align-items:center;
-              font-family:"Liberation Sans",sans-serif; font-size:9px; padding:1.5px 0;
-              border-bottom:1px dotted #ccc; color:#333; }}
-  .wx .row b {{ color:#121212; }}
-  .wx .fc {{ font-family:"Liberation Serif",serif; font-size:9.5px; color:#444; line-height:1.3; margin-top:3px; font-style:italic; }}
-
-  .feature {{ flex:1; display:grid; grid-template-columns: 1fr 1fr 1fr; gap:0 18px;
-              border-top:2px solid #121212; padding-top:5px; overflow:hidden; align-content:start; }}
-  .feature .leadcol {{ padding-right:18px; border-right:1px solid #ccc; }}
-  .feature .kicker {{ font-family:"Liberation Sans",sans-serif; font-size:8.5px; font-weight:700;
-                      letter-spacing:.13em; text-transform:uppercase; color:#8a1c1c; margin-bottom:2px; }}
-  .feature h2 {{ font-size:19px; line-height:1.08; font-weight:700; letter-spacing:-.008em; margin-bottom:4px; }}
-  .feature .first {{ font-size:11px; line-height:1.42; color:#2a2a2a; text-align:justify; }}
-  .feature .first::first-letter {{ float:left; font-size:40px; line-height:.82; padding:2px 5px 0 0; color:#8a1c1c; }}
-  .feature .col {{ font-size:9.5px; line-height:1.42; color:#333; text-align:justify; }}
-  .feature .col p {{ margin-bottom:5px; }}
-  .feature .byline {{ font-family:"Liberation Sans",sans-serif; font-size:8.5px; color:#6a6a6a;
-                      font-style:italic; margin-top:4px; }}
-  .feature .pull {{ font-family:"Liberation Serif",serif; font-size:11px; line-height:1.32;
-                    font-style:italic; color:#121212; border-left:3px solid #8a1c1c;
-                    padding-left:8px; margin:7px 0; }}
-
-  .foot {{ margin-top:5px; border-top:1px solid #121212; padding-top:3px;
-           font-family:"Liberation Sans",sans-serif; font-size:8px; color:#6a6a6a;
-           display:flex; justify-content:space-between; letter-spacing:.04em; }}
+  * {{ margin:0; padding:0; box-sizing:border-box; }}
+  body {{ width:{W}px; height:{H}px; overflow:hidden; background:#f7f4ee; color:#141414;
+         font-family:"Nimbus Sans","Liberation Sans","DejaVu Sans",Helvetica,Arial,sans-serif;
+         display:flex; flex-direction:column; }}
+  .mast {{ padding:14px 26px 12px; border-bottom:3px solid #141414; }}
+  .kicker-row {{ display:flex; justify-content:space-between; align-items:baseline;
+                 border-bottom:1px solid #b9b2a4; padding-bottom:6px; }}
+  .kicker-row .k {{ font-size:15px; letter-spacing:.2em; text-transform:uppercase;
+                    font-weight:700; color:#5f584c; }}
+  .kicker-row .r {{ font-size:15px; letter-spacing:.06em; color:#5f584c; font-weight:700; }}
+  h1 {{ font-size:62px; line-height:.92; letter-spacing:-.022em; font-weight:700;
+        margin-top:6px; text-transform:uppercase; }}
+  h1 .thin {{ font-weight:300; letter-spacing:-.01em; }}
+  .dateline {{ display:flex; gap:18px; align-items:center; margin-top:7px;
+               font-size:16px; color:#2f2a23; font-weight:700; }}
+  .dateline .dot {{ width:6px; height:6px; border-radius:50%; background:#b3271d; }}
+  .dateline .bar {{ flex:1; height:1px; background:#c9c2b4; }}
+  .dateline .loc {{ font-weight:400; }}
+  .grid {{ flex:1; display:grid; grid-template-columns:repeat(3,1fr);
+           grid-template-rows:repeat(6,1fr); }}
+  .tile {{ padding:9px 14px 8px; border-right:1px solid #d6d0c2;
+           border-bottom:1px solid #d6d0c2; display:flex; flex-direction:column;
+           justify-content:center; }}
+  .tile:nth-child(3n) {{ border-right:none; }}
+  .tile:nth-child(n+16) {{ border-bottom:none; }}
+  .art {{ display:flex; align-items:center; gap:10px; }}
+  .art svg {{ flex:none; }}
+  .txt {{ min-width:0; }}
+  .tile .kicker {{ font-size:13px; letter-spacing:.17em; text-transform:uppercase;
+                   font-weight:700; color:#8a8274; margin-bottom:2px; }}
+  .tile h2 {{ font-size:25px; line-height:1.02; font-weight:700; letter-spacing:-.015em;
+              margin-bottom:3px; }}
+  .tile p {{ font-size:16px; line-height:1.15; color:#5b544a; }}
+  .accent-red h2 {{ color:#8e1e16; }}
+  .accent-teal h2 {{ color:#145353; }}
+  .accent-red .kicker {{ color:#a2695f; }}
+  .accent-teal .kicker {{ color:#6d8b88; }}
+  .foot {{ padding:8px 26px 10px; border-top:3px solid #141414; display:flex;
+           justify-content:space-between; font-size:13px; letter-spacing:.11em;
+           text-transform:uppercase; color:#6d665a; font-weight:700; }}
 </style></head>
 <body>
-  <div class="top">
-    <div class="name">The Daily <span class="thin">Brief</span></div>
-    <div class="meta">INTERNATIONAL EDITION &nbsp;·&nbsp; ONE PAGE<br>
-      <b>18 NOVEMBER 2026</b> &nbsp;·&nbsp; 08:00 GMT</div>
-  </div>
-  <div class="dateline">
-    <span>Volume 1 &nbsp;·&nbsp; No. 1 &nbsp;·&nbsp; 18 November 2026</span>
-    <span class="vol">TODAY &mdash; 14 STORIES, ONE PAGE</span>
-  </div>
-
-  <div class="lead">
-    <div class="lead-main">
-      <div class="kicker">{LEAD['kicker']}</div>
-      <h1>{LEAD['head']}</h1>
-      <p class="dek">{LEAD['dek']}</p>
-      <div class="byline">{LEAD['byline']}</div>
+  <header class="mast">
+    <div class="kicker-row">
+      <span class="k">The World in a Day</span>
+      <span class="r">Wednesday &middot; 18 November 2026</span>
     </div>
-    <div class="lead-art">{LEAD_ART}</div>
-  </div>
-
-  <div class="band3">{''.join(side_html(*s) for s in SIDE)}</div>
-
-  <div class="band6">{''.join(brief_html(*b) for b in BRIEFS)}</div>
-
-  <div class="bot">
-    <div class="mkt">
-      <div class="hd">Markets at the close</div>
-      <table>
-        {''.join(f'<tr><td>{n}</td><td class="n">{v}</td><td class="{"up" if u.startswith("+") else "dn"}">{u}</td></tr>' for n,v,u in MARKETS)}
-      </table>
+    <h1><span class="thin">Wednesday</span> 18 November 2026</h1>
+    <div class="dateline">
+      <span>Eighteen stories</span><span class="dot"></span>
+      <span class="loc">Asia &middot; Europe &middot; Americas &middot; Gulf</span>
+      <span class="bar"></span><span class="loc">One Wednesday, all told</span>
     </div>
-    <div class="idx">
-      <div class="hd">Inside today&rsquo;s brief</div>
-      {''.join(f'<div class="it"><b>{t}</b><span>{d}</span></div>' for t,d in INDEX)}
-    </div>
-    <div class="wx">
-      <div class="hd">Weather &amp; sport</div>
-      <div class="row"><span><b>Beijing</b> · China</span><span>2&deg; / -3&deg;</span></div>
-      <div class="row"><span><b>Shenzhen</b> · China</span><span>21&deg; / 16&deg;</span></div>
-      <div class="row"><span><b>Sydney</b> · Australia</span><span>24&deg; / 18&deg;</span></div>
-      <div class="row"><span><b>Manila</b> · Philippines</span><span>27&deg; / 25&deg;</span></div>
-      <div class="row"><span><b>London</b> · UK</span><span>9&deg; / 5&deg;</span></div>
-      <div class="fc">Storm warning for the northern Philippines; Real Madrid await Mbappe&rsquo;s fitness test.</div>
-    </div>
-  </div>
-
-  <div class="feature">
-    <div class="leadcol">
-      <div class="kicker">{FEATURE['kicker']}</div>
-      <h2>{FEATURE['head']}</h2>
-      <p class="first">{FEATURE['body'][0]}</p>
-      <p class="col" style="margin-top:6px">{FEATURE['body'][1]}</p>
-      <div class="byline">{FEATURE['byline']}</div>
-    </div>
-    <div class="col">
-      <p>{FEATURE['body'][2]}</p>
-      <p>{FEATURE['body'][3]}</p>
-      <p class="pull">No communique. No signing ceremony. A closing session that could run past midnight &mdash; and, aides say, a private meeting with no staff in the room.</p>
-    </div>
-    <div class="col">
-      <p>{FEATURE['body'][4]}</p>
-      <p>{FEATURE['body'][5]}</p>
-    </div>
-  </div>
-
-  <div class="foot">
-    <span>THE DAILY BRIEF &mdash; 18 NOVEMBER 2026 &mdash; 14 STORIES, ONE PAGE</span>
-    <span>01 / 01</span>
-  </div>
-</body></html>'''
+  </header>
+  <main class="grid">
+{tiles}  </main>
+  <footer class="foot">
+    <span>Reported 18 Nov 2026</span>
+    <span>World news &middot; business &middot; sport</span>
+    <span>make.fun</span>
+  </footer>
+</body></html>
+"""
 
 
-def render(out_png):
-    with tempfile.NamedTemporaryFile('w', suffix='.html', delete=False, encoding='utf-8') as f:
-        f.write(HTML)
-        html_path = f.name
-    try:
-        subprocess.run([
-            'google-chrome', '--headless=new', '--disable-gpu', '--no-sandbox',
-            '--hide-scrollbars', '--force-device-scale-factor=1',
-            f'--window-size={W},{H}',
-            f'--screenshot={out_png}',
-            f'file://{html_path}',
-        ], check=True, capture_output=True, timeout=60)
-    finally:
-        os.unlink(html_path)
-    return out_png
+def main():
+    """Render the poster with Chrome and write the PNG in place."""
+    with tempfile.TemporaryDirectory() as work:
+        page = os.path.join(work, "poster.html")
+        shot = os.path.join(work, "poster.png")
+        with open(page, "w", encoding="utf-8") as fh:
+            fh.write(build_html())
+        chrome = shutil.which("google-chrome") or shutil.which("chromium")
+        if not chrome:
+            sys.exit("no chrome")
+        subprocess.run(
+            [
+                chrome,
+                "--headless=new",
+                "--disable-gpu",
+                "--no-sandbox",
+                "--hide-scrollbars",
+                "--force-device-scale-factor=1",
+                f"--window-size={W},{H}",
+                f"--screenshot={shot}",
+                "file://" + page,
+            ],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        shutil.copyfile(shot, OUT)
+    print(f"wrote {OUT} ({os.path.getsize(OUT)} bytes)")
 
 
-if __name__ == '__main__':
-    out = sys.argv[1] if len(sys.argv) > 1 else 'entry.png'
-    render(out)
-    print(f'rendered {out} ({os.path.getsize(out)} bytes)')
+if __name__ == "__main__":
+    main()
